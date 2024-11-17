@@ -25,6 +25,8 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
 
 @Composable
 fun Navigation() {
@@ -35,7 +37,6 @@ fun Navigation() {
         composable("LobbyScreen") { LobbyScreen(navController) }
         composable("GameBoardScreen") { GameBoardScreen(navController) }
         //composable("ResultScreen") { ResultScreen(navController) }
-
     }
 }
 
@@ -97,7 +98,24 @@ fun MainScreen(navController: NavController) {
 
 @Composable
 fun LobbyScreen(navController: NavController) {
-    val playersList = listOf("Player 1", "Player 2", "Player 3", "Player 4", "Player 5", "Player 6") // Replace with Firebase data later
+    val players = remember { mutableStateListOf<String>() }
+
+    // Fetch players from Firestore
+    LaunchedEffect(Unit) {
+        val firestore = FirebaseFirestore.getInstance()
+        val playersCollection = firestore.collection("players")
+
+        try {
+            val snapshot = playersCollection.get().await()
+            players.clear()
+            for (document in snapshot.documents) {
+                val name = document.getString("name")
+                name?.let { players.add(it) }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -119,8 +137,12 @@ fun LobbyScreen(navController: NavController) {
             modifier = Modifier.padding(vertical = 8.dp)
         )
 
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            items(playersList) { player ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            items(players) { player ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -139,15 +161,15 @@ fun LobbyScreen(navController: NavController) {
                         fontSize = 16.sp,
                         modifier = Modifier.weight(1f)
                     )
-                    Button(onClick = {
-                        // Navigate to the GameBoardScreen when challenging a player
-                        navController.navigate("GameBoardScreen")
-                    },
+                    Button(
+                        onClick = {
+                            navController.navigate("GameBoardScreen")
+                        },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color.Black,
                             contentColor = Color.White
                         )
-                    ){
+                    ) {
                         Text("Challenge")
                     }
                 }
@@ -155,6 +177,7 @@ fun LobbyScreen(navController: NavController) {
         }
     }
 }
+
 
 @Composable
 fun GameBoardScreen(navController: NavController) {
