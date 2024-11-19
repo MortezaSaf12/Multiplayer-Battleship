@@ -1,22 +1,18 @@
 package com.example.battleship
 
-//Imports
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -27,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import java.util.*
 
 @Composable
 fun Navigation() {
@@ -34,9 +31,11 @@ fun Navigation() {
 
     NavHost(navController = navController, startDestination = "MainScreen") {
         composable("MainScreen") { MainScreen(navController) }
-        composable("LobbyScreen") { LobbyScreen(navController) }
+        composable("LobbyScreen/{username}") { backStackEntry ->
+            val loggedInUsername = backStackEntry.arguments?.getString("username").orEmpty()
+            LobbyScreen(navController, loggedInUsername)
+        }
         composable("GameBoardScreen") { GameBoardScreen(navController) }
-        //composable("ResultScreen") { ResultScreen(navController) }
     }
 }
 
@@ -44,6 +43,8 @@ fun Navigation() {
 @Composable
 fun MainScreen(navController: NavController) {
     var username by remember { mutableStateOf(TextFieldValue("")) }
+    val firestore = FirebaseFirestore.getInstance()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -56,7 +57,6 @@ fun MainScreen(navController: NavController) {
             text = "Welcome to Battleship",
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.Black,
             modifier = Modifier.padding(bottom = 24.dp)
         )
 
@@ -68,9 +68,8 @@ fun MainScreen(navController: NavController) {
                 .fillMaxWidth()
                 .padding(bottom = 24.dp),
             singleLine = true,
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            shape = MaterialTheme.shapes.medium,
             colors = TextFieldDefaults.outlinedTextFieldColors(
-                containerColor = Color.Transparent,
                 focusedBorderColor = Color.Black,
                 unfocusedBorderColor = Color.Black,
                 cursorColor = Color.Black
@@ -79,12 +78,30 @@ fun MainScreen(navController: NavController) {
 
         Button(
             onClick = {
-                navController.navigate("LobbyScreen")
+                if (username.text.isNotBlank()) {
+                    checkAndAddPlayer(
+                        username = username.text.trim(),
+                        firestore = firestore,
+                        onPlayerExists = {
+                            Toast.makeText(context, "Welcome back, ${username.text.trim()}", Toast.LENGTH_SHORT).show()
+                            navController.navigate("LobbyScreen/${username.text.trim()}")
+                        },
+                        onPlayerAdded = {
+                            Toast.makeText(context, "Player added successfully!", Toast.LENGTH_SHORT).show()
+                            navController.navigate("LobbyScreen/${username.text.trim()}")
+                        },
+                        onError = { errorMessage ->
+                            Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                } else {
+                    Toast.makeText(context, "Please enter a valid Username", Toast.LENGTH_SHORT).show()
+                }
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 32.dp),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+            shape = MaterialTheme.shapes.large,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Black,
                 contentColor = Color.White
@@ -95,25 +112,95 @@ fun MainScreen(navController: NavController) {
     }
 }
 
+fun checkAndAddPlayer(
+    username: String,
+    firestore: FirebaseFirestore,
+    onPlayerExists: () -> Unit,
+    onPlayerAdded: () -> Unit,
+    onError: (String) -> Unit
+) {
+    val playersCollection = firestore.collection("players")
+
+    playersCollection
+        .whereEqualTo("name", username)
+        .get()
+        .addOnSuccessListener { snapshot ->
+            if (!snapshot.isEmpty) {
+                playersCollection
+                    .document(snapshot.documents[0].id)
+                    .update("status", "online")
+                    .addOnSuccessListener { onPlayerExists() }
+                    .addOnFailureListener { onError("Error updating player status") }
+            } else {
+                playersCollection
+                    .add(
+                        mapOf(
+                            "name" to username,
+                            "status" to "online",
+                            "playerId" to UUID.randomUUID().toString()
+                        )
+                    )
+                    .addOnSuccessListener { onPlayerAdded() }
+                    .addOnFailureListener { exception ->
+                        onError("Error adding player: ${exception.message}")
+                    }
+            }
+        }
+        .addOnFailureListener { exception ->
+            onError("Error checking player: ${exception.message}")
+        }
+}
 
 @Composable
-fun LobbyScreen(navController: NavController) {
+fun LobbyScreen(navController: NavController, loggedInUsername: String) {
     val players = remember { mutableStateListOf<String>() }
+    val firestore = FirebaseFirestore.getInstance()
+    val context = LocalContext.current
 
-    // Fetch players from Firestore
-    LaunchedEffect(Unit) {
-        val firestore = FirebaseFirestore.getInstance()
-        val playersCollection = firestore.collection("players")
-
-        try {
-            val snapshot = playersCollection.get().await()
-            players.clear()
-            for (document in snapshot.documents) {
-                val name = document.getString("name")
-                name?.let { players.add(it) }
+    DisposableEffect(Unit) {
+        val listenerRegistration = firestore.collection("players")
+            .whereEqualTo("status", "online")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Toast.makeText(context, "Error fetching players: ${error.message}", Toast.LENGTH_SHORT).show()
+                    return@addSnapshotListener
+                }
+                snapshot?.documents?.mapNotNull {
+                    val name = it.getString("name")
+                    val status = it.getString("status")
+                    if (name != null && status != null && name) "$name - $status" else null
+                    //if (name != null && status != null && name != loggedInUsername) "$name - $status" else null
+                }?.let {
+                    players.clear()
+                    players.addAll(it)
+                }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        onDispose {
+            listenerRegistration.remove()
+        }
+    }
+
+    @Composable
+    fun PlayerRow(player: String, onChallengeClick: () -> Unit) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+                .border(1.dp, Color.Black, shape = MaterialTheme.shapes.small)
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(text = player, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Button(
+                onClick = onChallengeClick,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Black,
+                    contentColor = Color.White
+                )
+            ) {
+                Text("Challenge")
+            }
         }
     }
 
@@ -126,8 +213,7 @@ fun LobbyScreen(navController: NavController) {
         Text(
             text = "Lobby",
             fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black
+            fontWeight = FontWeight.Bold
         )
 
         Text(
@@ -137,76 +223,32 @@ fun LobbyScreen(navController: NavController) {
             modifier = Modifier.padding(vertical = 8.dp)
         )
 
+        Text(
+            text = "Welcome, $loggedInUsername!",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(vertical = 16.dp)
+        )
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
         ) {
             items(players) { player ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)
-                        .border(
-                            width = 1.dp,
-                            color = Color.Black,
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                        )
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = player,
-                        fontSize = 16.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Button(
-                        onClick = {
-                            navController.navigate("GameBoardScreen")
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Black,
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Text("Challenge")
-                    }
+                PlayerRow(player = player) {
+                    navController.navigate("GameBoardScreen")
                 }
             }
         }
     }
 }
 
-
 @Composable
 fun GameBoardScreen(navController: NavController) {
     val boardSize = 10
-    val grid = remember { mutableStateListOf<MutableList<String>>() }
-    val playerName = "Player 1"
-    val opponentName = "Player 2"
-    var turn by remember { mutableStateOf(playerName) }
-    val statusMessage by remember { mutableStateOf("Game in Progress...") }
-
-    // Initialize grid with "W" for water
-    LaunchedEffect(Unit) {
-        if (grid.isEmpty()) {
-            for (i in 0 until boardSize) {
-                grid.add(MutableList(boardSize) { "W" })
-            }
-        }
-    }
-
-    // Handle grid not being initialized
-    if (grid.isEmpty()) {
-        Text(
-            text = "Loading game...",
-            modifier = Modifier.fillMaxSize(),
-            fontSize = 20.sp,
-            color = Color.Black
-        )
-        return
-    }
+    val grid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } }
+    var turn by remember { mutableStateOf("Player 1") }
 
     Column(
         modifier = Modifier
@@ -214,30 +256,19 @@ fun GameBoardScreen(navController: NavController) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Display game state
         Text(
-            text = "$playerName vs $opponentName",
+            text = "Player 1 vs Player 2",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.Black,
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
         Text(
             text = "Current Turn: $turn",
             fontSize = 16.sp,
-            color = Color.Gray,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        Text(
-            text = statusMessage,
-            fontSize = 14.sp,
-            color = Color.Blue,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Game board grid
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -261,9 +292,9 @@ fun GameBoardScreen(navController: NavController) {
                                         }
                                     )
                                     .clickable {
-                                        if (turn == playerName) {
-                                            grid[i][j] = if (grid[i][j] == "W") "H" else "S"
-                                            turn = opponentName
+                                        if (turn == "Player 1") {
+                                            grid[i][j] = if (grid[i][j] == "W") "H" else grid[i][j]
+                                            turn = "Player 2"
                                         }
                                     }
                             )
@@ -275,11 +306,8 @@ fun GameBoardScreen(navController: NavController) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // End turn button
         Button(
-            onClick = {
-                turn = if (turn == playerName) opponentName else playerName
-            },
+            onClick = { turn = if (turn == "Player 1") "Player 2" else "Player 1" },
             modifier = Modifier.padding(vertical = 8.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Black,
@@ -289,19 +317,15 @@ fun GameBoardScreen(navController: NavController) {
             Text("End Turn")
         }
 
-        //Quit game
         Button(
-            onClick = {
-                navController.popBackStack() // Navigate to previous screen (Lobby screen)
-            },
+            onClick = { navController.popBackStack() },
             modifier = Modifier.padding(vertical = 8.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Black,
                 contentColor = Color.White
             )
         ) {
-            Text("Quit game")
+            Text("Quit Game")
         }
     }
 }
-
