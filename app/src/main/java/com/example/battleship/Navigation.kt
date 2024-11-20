@@ -17,12 +17,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.tasks.await
 import java.util.*
 
 @Composable
@@ -33,18 +35,52 @@ fun Navigation() {
         composable("MainScreen") { MainScreen(navController) }
         composable("LobbyScreen/{username}") { backStackEntry ->
             val loggedInUsername = backStackEntry.arguments?.getString("username").orEmpty()
-            LobbyScreen(navController, loggedInUsername)
+            if (loggedInUsername.isBlank()) {
+                Toast.makeText(LocalContext.current, "Invalid username", Toast.LENGTH_SHORT).show()
+                navController.popBackStack()
+            } else {
+                LobbyScreen(navController, loggedInUsername)
+            }
         }
-        composable("GameBoardScreen") { GameBoardScreen(navController) }
+        composable("GameBoardScreen?playerName={playerName}&opponentName={opponentName}") { backStackEntry ->
+            val playerName = backStackEntry.arguments?.getString("playerName").orEmpty()
+            val opponentName = backStackEntry.arguments?.getString("opponentName").orEmpty()
+            GameBoardScreen(navController, playerName, opponentName)
+        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(navController: NavController) {
     var username by remember { mutableStateOf(TextFieldValue("")) }
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Handle player status based on lifecycle events
+    DisposableEffect(lifecycleOwner) {
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    if (username.text.isNotBlank()) {
+                        setPlayerStatus(username.text.trim(), "online", firestore)
+                    }
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    if (username.text.isNotBlank()) {
+                        setPlayerStatus(username.text.trim(), "offline", firestore)
+                    }
+                }
+                else -> Unit
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -66,14 +102,9 @@ fun MainScreen(navController: NavController) {
             label = { Text("Enter Username") },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 24.dp),
-            singleLine = true,
-            shape = MaterialTheme.shapes.medium,
-            colors = TextFieldDefaults.outlinedTextFieldColors(
-                focusedBorderColor = Color.Black,
-                unfocusedBorderColor = Color.Black,
-                cursorColor = Color.Black
-            )
+                .padding(8.dp),
+            textStyle = LocalTextStyle.current.copy(color = Color.Black),
+            singleLine = true
         )
 
         Button(
@@ -112,6 +143,7 @@ fun MainScreen(navController: NavController) {
     }
 }
 
+//Helper function
 fun checkAndAddPlayer(
     username: String,
     firestore: FirebaseFirestore,
@@ -151,12 +183,25 @@ fun checkAndAddPlayer(
         }
 }
 
+//Helper function
+private fun setPlayerStatus(username: String, status: String, firestore: FirebaseFirestore) {
+    firestore.collection("players")
+        .whereEqualTo("name", username)
+        .get()
+        .addOnSuccessListener { snapshot ->
+            if (!snapshot.isEmpty) {
+                snapshot.documents[0].reference.update("status", status)
+            }
+        }
+}
+
 @Composable
 fun LobbyScreen(navController: NavController, loggedInUsername: String) {
     val players = remember { mutableStateListOf<String>() }
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
 
+    // Fetching "online users
     DisposableEffect(Unit) {
         val listenerRegistration = firestore.collection("players")
             .whereEqualTo("status", "online")
@@ -168,7 +213,7 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
                 snapshot?.documents?.mapNotNull {
                     val name = it.getString("name")
                     val status = it.getString("status")
-                    if (name != null && status != null && name) "$name - $status" else null
+                    if (name != null && status != null) "$name - $status" else null
                     //if (name != null && status != null && name != loggedInUsername) "$name - $status" else null
                 }?.let {
                     players.clear()
@@ -217,17 +262,17 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         )
 
         Text(
-            text = "Online Players",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-
-        Text(
             text = "Welcome, $loggedInUsername!",
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(vertical = 16.dp)
+        )
+
+        Text(
+            text = "Online Players",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(vertical = 8.dp)
         )
 
         LazyColumn(
@@ -237,18 +282,52 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         ) {
             items(players) { player ->
                 PlayerRow(player = player) {
-                    navController.navigate("GameBoardScreen")
+                    val opponent = player.substringBefore(" - ")
+                    navController.navigate("GameBoardScreen?playerName=$loggedInUsername&opponentName=$opponent")
                 }
             }
         }
     }
-}
+    }
 
 @Composable
-fun GameBoardScreen(navController: NavController) {
+fun GameBoardScreen(
+    navController: NavController,
+    playerName: String,
+    opponentName: String
+) {
     val boardSize = 10
-    val grid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } }
+    val player1Grid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 1's grid
+    val player2Grid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 2's grid
+    val player1View = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 1's view of Player 2's grid
+    val player2View = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 2's view of Player 1's grid
     var turn by remember { mutableStateOf("Player 1") }
+
+    fun translateCoordinates(row: Int, col: Int): Pair<Int, Int> {
+        // Simple translation logic (identity mapping for demonstration)
+        return row to col
+    }
+
+    fun handleCellClick(
+        playerGrid: MutableList<MutableList<String>>,
+        opponentView: MutableList<MutableList<String>>,
+        row: Int,
+        col: Int
+    ) {
+        if (turn == "Player 1") {
+            val (translatedRow, translatedCol) = translateCoordinates(row, col)
+            if (opponentView[translatedRow][translatedCol] == "W") {
+                opponentView[translatedRow][translatedCol] = if (playerGrid[translatedRow][translatedCol] == "S") "H" else "M"
+                turn = "Player 2"
+            }
+        } else {
+            val (translatedRow, translatedCol) = translateCoordinates(row, col)
+            if (opponentView[translatedRow][translatedCol] == "W") {
+                opponentView[translatedRow][translatedCol] = if (playerGrid[translatedRow][translatedCol] == "S") "H" else "M"
+                turn = "Player 1"
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -257,69 +336,56 @@ fun GameBoardScreen(navController: NavController) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Player 1 vs Player 2",
+            text = "$playerName vs $opponentName",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
         Text(
-            text = "Current Turn: $turn",
+            text = "Current Turn: ${if (turn == "Player 1") playerName else opponentName}",
             fontSize = 16.sp,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .background(Color.Blue)
-        ) {
-            Column {
-                for (i in 0 until boardSize) {
-                    Row {
-                        for (j in 0 until boardSize) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .aspectRatio(1f)
-                                    .border(1.dp, Color.Black)
-                                    .background(
-                                        when (grid[i][j]) {
-                                            "H" -> Color.Red
-                                            "S" -> Color.Black
-                                            else -> Color.Cyan
-                                        }
-                                    )
-                                    .clickable {
-                                        if (turn == "Player 1") {
-                                            grid[i][j] = if (grid[i][j] == "W") "H" else grid[i][j]
-                                            turn = "Player 2"
-                                        }
-                                    }
-                            )
-                        }
+        // Opponent's Grid
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "$opponentName's Board",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            GridView(
+                grid = if (turn == "Player 1") player1View else player2View,
+                onCellClick = { row, col ->
+                    if (turn == "Player 1") {
+                        handleCellClick(player2Grid, player1View, row, col)
+                    } else {
+                        handleCellClick(player1Grid, player2View, row, col)
                     }
                 }
-            }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Player's Own Grid
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "$playerName's Ships",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            GridView(grid = if (turn == "Player 1") player1Grid else player2Grid)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         Button(
-            onClick = { turn = if (turn == "Player 1") "Player 2" else "Player 1" },
-            modifier = Modifier.padding(vertical = 8.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Black,
-                contentColor = Color.White
-            )
-        ) {
-            Text("End Turn")
-        }
-
-        Button(
             onClick = { navController.popBackStack() },
-            modifier = Modifier.padding(vertical = 8.dp),
+            modifier = Modifier.padding(vertical = 16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Black,
                 contentColor = Color.White
@@ -329,3 +395,43 @@ fun GameBoardScreen(navController: NavController) {
         }
     }
 }
+
+@Composable
+fun GridView(
+    grid: List<List<String>>,
+    onCellClick: ((Int, Int) -> Unit)? = null
+) {
+    Column(
+        modifier = Modifier
+            .size(300.dp)
+            .aspectRatio(1f)
+    ) {
+        for (i in grid.indices) {
+            Row(
+                modifier = Modifier.weight(1f)
+            ) {
+                for (j in grid[i].indices) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .border(1.dp, Color.Black)
+                            .background(
+                                when (grid[i][j]) {
+                                    "H" -> Color.Red // Hit
+                                    "M" -> Color.Gray // Miss
+                                    "S" -> Color.Black // Ship
+                                    else -> Color.Cyan // Water
+                                }
+                            )
+                            .clickable(enabled = onCellClick != null) {
+                                onCellClick?.invoke(i, j)
+                            }
+                    )
+                }
+            }
+        }
+    }
+}
+
+
