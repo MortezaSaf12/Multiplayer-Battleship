@@ -1,9 +1,7 @@
 package com.example.battleship
 
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,15 +15,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.*
+import android.util.Log
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @Composable
 fun Navigation() {
@@ -55,32 +61,6 @@ fun MainScreen(navController: NavController) {
     var username by remember { mutableStateOf(TextFieldValue("")) }
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-
-    // Handle player status based on lifecycle events
-    DisposableEffect(lifecycleOwner) {
-        val lifecycleObserver = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> {
-                    if (username.text.isNotBlank()) {
-                        setPlayerStatus(username.text.trim(), "online", firestore)
-                    }
-                }
-                Lifecycle.Event.ON_STOP -> {
-                    if (username.text.isNotBlank()) {
-                        setPlayerStatus(username.text.trim(), "offline", firestore)
-                    }
-                }
-                else -> Unit
-            }
-        }
-
-        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
-
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
-        }
-    }
 
     Column(
         modifier = Modifier
@@ -191,8 +171,88 @@ private fun setPlayerStatus(username: String, status: String, firestore: Firebas
         .addOnSuccessListener { snapshot ->
             if (!snapshot.isEmpty) {
                 snapshot.documents[0].reference.update("status", status)
+                    .addOnSuccessListener {
+                    }
+                    .addOnFailureListener { error ->
+                        Log.e("FirestoreError", "Error updating player status: ${error.message}") // Logging error
+                    }
+            } else {
+                Log.d("Firestore", "Player document not found for username: $username") // Logging document not found
             }
         }
+        .addOnFailureListener { error ->
+            Log.e("FirestoreError", "Error fetching player document: ${error.message}") // Logging error fetching document
+        }
+}
+
+//Helper function
+@Composable
+fun PlayerRow(player: String, onChallengeClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+            .border(1.dp, Color.Black, shape = MaterialTheme.shapes.small)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = player, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        Button(
+            onClick = {
+                Log.d("Challenge", "Challenge button clicked for $player")
+                onChallengeClick()
+            },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Black,
+                contentColor = Color.White
+            )
+        ){
+            Text("Challenge")
+        }
+    }
+}
+
+@Composable
+fun GameInvitation(
+    onDismissRequest: () -> Unit,
+    onConfirmation: () -> Unit,
+    dialogTitle: String,
+    dialogText: String,
+    icon: ImageVector,
+) {
+    AlertDialog(
+        icon = {
+            Icon(icon, contentDescription = "Game Invitation Alert")
+        },
+        title = {
+            Text(text = dialogTitle)
+        },
+        text = {
+            Text(text = dialogText)
+        },
+        onDismissRequest = {
+            onDismissRequest()
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirmation()
+                }
+            ) {
+                Text("Accept")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    onDismissRequest()
+                }
+            ) {
+                Text("Decline")
+            }
+        }
+    )
 }
 
 @Composable
@@ -200,55 +260,104 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
     val players = remember { mutableStateListOf<String>() }
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var opponent by remember { mutableStateOf<String?>(null) } // Holds the opponent being challenged
+    var incomingChallenge by remember { mutableStateOf<Triple<String, String, String>?>(null) } // Holds (id, fromPlayer, toPlayer)
 
-    // Fetching "online users
-    DisposableEffect(Unit) {
-        val listenerRegistration = firestore.collection("players")
-            .whereEqualTo("status", "online")
+    // Observer to handle online/offline status
+    LaunchedEffect(lifecycleOwner) {
+        val observer = object : LifecycleEventObserver {
+            override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+                when (event) {
+                    Lifecycle.Event.ON_START -> {
+                        setPlayerStatus(loggedInUsername, "online", firestore)
+                    }
+                    Lifecycle.Event.ON_STOP -> {
+                        setPlayerStatus(loggedInUsername, "offline", firestore)
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+    }
+
+    // Fetch live updates for player statuses
+    LaunchedEffect(Unit) {
+        firestore.collection("players")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Toast.makeText(context, "Error fetching players: ${error.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        "Error fetching players: ${error.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
                     return@addSnapshotListener
                 }
                 snapshot?.documents?.mapNotNull {
                     val name = it.getString("name")
                     val status = it.getString("status")
-                    if (name != null && status != null) "$name - $status" else null
-                    //if (name != null && status != null && name != loggedInUsername) "$name - $status" else null
+                    if (name != null && status != null && name != loggedInUsername) "$name - $status" else null
                 }?.let {
                     players.clear()
                     players.addAll(it)
                 }
             }
-        onDispose {
-            listenerRegistration.remove()
+    }
+
+    // Send a challenge when `opponent` is set
+    LaunchedEffect(opponent) {
+        opponent?.let { currentOpponent ->
+            sendChallenge(
+                fromPlayer = loggedInUsername,
+                toPlayer = currentOpponent,
+                firestore = firestore,
+                onSuccess = {
+                    Log.d("Challenge", "Challenge sent to $currentOpponent")
+                    opponent = null // Reset opponent after sending
+                },
+                onFailure = { exception ->
+                    Log.e("ChallengeError", "Failed to send challenge: ${exception.message}")
+                }
+            )
         }
     }
 
-    @Composable
-    fun PlayerRow(player: String, onChallengeClick: () -> Unit) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-                .border(1.dp, Color.Black, shape = MaterialTheme.shapes.small)
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(text = player, fontSize = 16.sp, modifier = Modifier.weight(1f))
-            Button(
-                onClick = onChallengeClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Black,
-                    contentColor = Color.White
-                )
-            ) {
-                Text("Challenge")
+    // Listen for challenges targeted at the current user
+    LaunchedEffect(Unit) {
+        listenForChallenges(
+            loggedInUsername = loggedInUsername,
+            firestore = firestore,
+            onIncomingChallenge = { id, fromPlayer, toPlayer ->
+                incomingChallenge = Triple(id, fromPlayer, toPlayer)
             }
-        }
+        )
     }
 
+    // Handle Game Invitation Dialog
+    incomingChallenge?.let { (challengeId, challenger, _) ->
+        GameInvitation(
+            onDismissRequest = {
+                declineChallenge(challengeId, firestore) // Decline challenge
+                incomingChallenge = null
+            },
+            onConfirmation = {
+                acceptChallenge(
+                    challengeId = challengeId,
+                    fromPlayer = challenger,
+                    toPlayer = loggedInUsername,
+                    firestore = firestore,
+                    navController = navController
+                )
+                incomingChallenge = null
+            },
+            dialogTitle = "Game Invitation",
+            dialogText = "$challenger has challenged you to a game. Do you accept?",
+            icon = Icons.Default.Notifications
+        )
+    }
+
+    // UI Layout
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -282,13 +391,96 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         ) {
             items(players) { player ->
                 PlayerRow(player = player) {
-                    val opponent = player.substringBefore(" - ")
-                    navController.navigate("GameBoardScreen?playerName=$loggedInUsername&opponentName=$opponent")
+                    val selectedOpponent = player.substringBefore(" - ") // Extract opponent name
+                    opponent = selectedOpponent // Set opponent to trigger challenge
                 }
             }
         }
     }
-    }
+}
+
+//Send challenge
+fun sendChallenge(
+    fromPlayer: String,
+    toPlayer: String,
+    firestore: FirebaseFirestore,
+    onSuccess: () -> Unit,
+    onFailure: (Exception) -> Unit
+) {
+    val challenge = mapOf(
+        "fromPlayer" to fromPlayer,
+        "toPlayer" to toPlayer,
+        "status" to "pending"
+    )
+
+    firestore.collection("challenges")
+        .add(challenge)
+        .addOnSuccessListener { onSuccess() }
+        .addOnFailureListener { exception -> onFailure(exception) }
+}
+
+//Listen for Challenges
+fun listenForChallenges(
+    loggedInUsername: String,
+    firestore: FirebaseFirestore,
+    onIncomingChallenge: (String, String, String) -> Unit
+) {
+    firestore.collection("challenges")
+        .whereEqualTo("toPlayer", loggedInUsername) // Filter for challenges targeting the current player
+        .whereEqualTo("status", "pending") // Only listen for pending challenges
+        .addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.e("ChallengeError", "Error listening to challenges: ${error.message}")
+                return@addSnapshotListener
+            }
+
+            // Map Firestore documents to challenge data
+            snapshot?.documents?.mapNotNull { doc ->
+                val id = doc.id
+                val fromPlayer = doc.getString("fromPlayer")
+                val toPlayer = doc.getString("toPlayer")
+                val status = doc.getString("status")
+
+                if (fromPlayer != null && toPlayer != null && status == "pending") {
+                    Triple(id, fromPlayer, toPlayer)
+                } else null
+            }?.firstOrNull()?.let { (id, fromPlayer, toPlayer) ->
+                // Pass the first pending challenge to the callback
+                onIncomingChallenge(id, fromPlayer, toPlayer)
+            }
+        }
+}
+
+
+//Accept Challenge
+fun acceptChallenge(
+    challengeId: String,
+    fromPlayer: String,
+    toPlayer: String,
+    firestore: FirebaseFirestore,
+    navController: NavController
+) {
+    firestore.collection("challenges").document(challengeId)
+        .update("status", "accepted")
+        .addOnSuccessListener {
+            navController.navigate("GameBoardScreen?playerName=$toPlayer&opponentName=$fromPlayer")
+        }
+        .addOnFailureListener { exception ->
+            Log.e("ChallengeError", "Error accepting challenge: ${exception.message}")
+        }
+}
+
+//Decline Challenge
+fun declineChallenge(challengeId: String, firestore: FirebaseFirestore) {
+    firestore.collection("challenges").document(challengeId)
+        .update("status", "declined")
+        .addOnSuccessListener {
+            Log.d("Challenge", "Challenge declined successfully")
+        }
+        .addOnFailureListener { exception ->
+            Log.e("ChallengeError", "Error declining challenge: ${exception.message}")
+        }
+}
 
 @Composable
 fun GameBoardScreen(
@@ -433,5 +625,4 @@ fun GridView(
         }
     }
 }
-
 

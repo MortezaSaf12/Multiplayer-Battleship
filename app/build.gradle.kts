@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.firestore.ktx)
+    //implementation(libs.firebase.crashlytics)
 
     //Jetpack Compose
     implementation(libs.androidx.compose.ui.ui)
