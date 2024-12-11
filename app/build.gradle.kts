@@ -53,7 +53,7 @@ dependencies {
 
     //Jetpack Compose
     implementation(libs.androidx.compose.ui.ui)
-    implementation(libs.material3)
+    implementation("androidx.compose.material3:material3")
     implementation(libs.androidx.navigation.compose)
 
     //Core dependencies

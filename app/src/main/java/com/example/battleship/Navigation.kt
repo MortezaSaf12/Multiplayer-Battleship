@@ -1,5 +1,6 @@
 package com.example.battleship
 
+import androidx.compose.foundation.Image
 import android.widget.Toast
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -28,10 +30,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.material3.TextFieldDefaults
 
 @Composable
 fun Navigation() {
@@ -57,68 +62,109 @@ fun Navigation() {
 }
 
 @Composable
+fun Background(content: @Composable () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.pxfuel),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        content()
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun MainScreen(navController: NavController) {
     var username by remember { mutableStateOf(TextFieldValue("")) }
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "Welcome to Battleship",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 24.dp)
-        )
-
-        OutlinedTextField(
-            value = username,
-            onValueChange = { username = it },
-            label = { Text("Enter Username") },
+    Background {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            textStyle = LocalTextStyle.current.copy(color = Color.Black),
-            singleLine = true
-        )
-
-        Button(
-            onClick = {
-                if (username.text.isNotBlank()) {
-                    checkAndAddPlayer(
-                        username = username.text.trim(),
-                        firestore = firestore,
-                        onPlayerExists = {
-                            Toast.makeText(context, "Welcome back, ${username.text.trim()}", Toast.LENGTH_SHORT).show()
-                            navController.navigate("LobbyScreen/${username.text.trim()}")
-                        },
-                        onPlayerAdded = {
-                            Toast.makeText(context, "Player added successfully!", Toast.LENGTH_SHORT).show()
-                            navController.navigate("LobbyScreen/${username.text.trim()}")
-                        },
-                        onError = { errorMessage ->
-                            Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
-                        }
-                    )
-                } else {
-                    Toast.makeText(context, "Please enter a valid Username", Toast.LENGTH_SHORT).show()
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            shape = MaterialTheme.shapes.large,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Black,
-                contentColor = Color.White
-            )
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f)) // Semi-transparent overlay
         ) {
-            Text("Join Lobby", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Welcome to Battleship",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White, // White text for better contrast
+                    modifier = Modifier.padding(bottom = 24.dp)
+                )
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Enter Username", color = Color.White) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    textStyle = LocalTextStyle.current.copy(color = Color.White),
+                    singleLine = true,
+                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color.LightGray,
+                        focusedLabelColor = Color.White,
+                        unfocusedLabelColor = Color.White,
+                        cursorColor = Color.White,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
+                )
+
+                Button(
+                    onClick = {
+                        if (username.text.isNotBlank()) {
+                            checkAndAddPlayer(
+                                username = username.text.trim(),
+                                firestore = firestore,
+                                onPlayerExists = {
+                                    Toast.makeText(
+                                        context,
+                                        "Welcome back, ${username.text.trim()}",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    navController.navigate("LobbyScreen/${username.text.trim()}")
+                                },
+                                onPlayerAdded = {
+                                    Toast.makeText(
+                                        context,
+                                        "Player added successfully!",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    navController.navigate("LobbyScreen/${username.text.trim()}")
+                                },
+                                onError = { errorMessage ->
+                                    Toast.makeText(context, errorMessage, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        } else {
+                            Toast.makeText(context, "Please enter a valid Username", Toast.LENGTH_SHORT)
+                                .show()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp),
+                    shape = MaterialTheme.shapes.large,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.DarkGray,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("Join Lobby", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -174,44 +220,57 @@ private fun setPlayerStatus(username: String, status: String, firestore: Firebas
                     .addOnSuccessListener {
                     }
                     .addOnFailureListener { error ->
-                        Log.e("FirestoreError", "Error updating player status: ${error.message}") // Logging error
+                        Log.e("FirestoreError", "Error updating player status: ${error.message}")
                     }
             } else {
-                Log.d("Firestore", "Player document not found for username: $username") // Logging document not found
+                Log.d("Firestore", "Player document not found for username: $username")
             }
         }
         .addOnFailureListener { error ->
-            Log.e("FirestoreError", "Error fetching player document: ${error.message}") // Logging error fetching document
+            Log.e("FirestoreError", "Error fetching player document: ${error.message}")
         }
 }
 
 //Helper function
 @Composable
 fun PlayerRow(player: String, onChallengeClick: () -> Unit) {
+    // Split the player string into name and status
+    val parts = player.split(" - ")
+    val playerName = parts.getOrNull(0) ?: ""
+    val status = parts.getOrNull(1) ?: ""
+
+    val statusColor = if (status.equals("online", ignoreCase = true)) Color.Green else Color.White
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(8.dp)
-            .border(1.dp, Color.Black, shape = MaterialTheme.shapes.small)
+            // Add a semi-transparent overlay for the row
+            .background(Color.Black.copy(alpha = 0.4f), shape = MaterialTheme.shapes.small)
+            .border(1.dp, Color.White, shape = MaterialTheme.shapes.small)
             .padding(12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = player, fontSize = 16.sp, modifier = Modifier.weight(1f))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = playerName, fontSize = 16.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            Text(text = status, fontSize = 14.sp, color = statusColor)
+        }
         Button(
             onClick = {
-                Log.d("Challenge", "Challenge button clicked for $player")
+                Log.d("Challenge", "Challenge button clicked for $playerName")
                 onChallengeClick()
             },
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Black,
                 contentColor = Color.White
             )
-        ){
+        ) {
             Text("Challenge")
         }
     }
 }
+
 
 @Composable
 fun GameInvitation(
@@ -272,9 +331,11 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
                     Lifecycle.Event.ON_START -> {
                         setPlayerStatus(loggedInUsername, "online", firestore)
                     }
+
                     Lifecycle.Event.ON_STOP -> {
                         setPlayerStatus(loggedInUsername, "offline", firestore)
                     }
+
                     else -> Unit
                 }
             }
@@ -357,44 +418,76 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         )
     }
 
-    // UI Layout
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "Lobby",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            text = "Welcome, $loggedInUsername!",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(vertical = 16.dp)
-        )
-
-        Text(
-            text = "Online Players",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-
-        LazyColumn(
+    Background {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            items(players) { player ->
-                PlayerRow(player = player) {
-                    val selectedOpponent = player.substringBefore(" - ") // Extract opponent name
-                    opponent = selectedOpponent // Set opponent to trigger challenge
+            Text(
+                text = "Lobby",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 24.dp)
+            )
+
+            Text(
+                text = "Welcome, $loggedInUsername!",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(vertical = 16.dp)
+            )
+
+            Text(
+                text = "Online Players",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            // A card-like background for player list for better readability
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(8.dp)
+            ) {
+                LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                    items(players) { player ->
+                        PlayerRow(player = player) {
+                            val selectedOpponent = player.substringBefore(" - ")
+                            opponent = selectedOpponent
+                        }
+                    }
                 }
             }
+        }
+
+        // GameInvitation (Dialog)
+        incomingChallenge?.let { (challengeId, challenger, _) ->
+            GameInvitation(
+                onDismissRequest = {
+                    declineChallenge(challengeId, firestore)
+                    incomingChallenge = null
+                },
+                onConfirmation = {
+                    acceptChallenge(
+                        challengeId = challengeId,
+                        fromPlayer = challenger,
+                        toPlayer = loggedInUsername,
+                        firestore = firestore,
+                        navController = navController
+                    )
+                    incomingChallenge = null
+                },
+                dialogTitle = "Game Invitation",
+                dialogText = "$challenger has challenged you to a game. Do you accept?",
+                icon = Icons.Default.Notifications
+            )
         }
     }
 }

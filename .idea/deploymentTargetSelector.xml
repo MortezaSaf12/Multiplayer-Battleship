@@ -3,8 +3,8 @@
   <component name="deploymentTargetSelector">
     <selectionStates>
       <SelectionState runConfigName="Battleship.app">
-        <option name="selectionMode" value="DIALOG" />
-        <DropdownSelection timestamp="2024-12-06T13:44:04.708777Z">
+        <option name="selectionMode" value="DROPDOWN" />
+        <DropdownSelection timestamp="2024-12-11T11:30:59.977776Z">
           <Target type="DEFAULT_BOOT">
             <handle>
               <DeviceId pluginId="LocalEmulator" identifier="path=/Users/morsaf731/.android/avd/Medium_Phone.avd" />
