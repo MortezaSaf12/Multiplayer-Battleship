@@ -220,14 +220,14 @@ private fun setPlayerStatus(username: String, status: String, firestore: Firebas
                     .addOnSuccessListener {
                     }
                     .addOnFailureListener { error ->
-                        Log.e("FirestoreError", "Error updating player status: ${error.message}")
+                        Log.e("Error", "Error updating player status: ${error.message}")
                     }
             } else {
-                Log.d("Firestore", "Player document not found for username: $username")
+                Log.d("Error", "Player document not found for username: $username")
             }
         }
         .addOnFailureListener { error ->
-            Log.e("FirestoreError", "Error fetching player document: ${error.message}")
+            Log.e("Error", "Error fetching player document: ${error.message}")
         }
 }
 
@@ -320,10 +320,14 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var opponent by remember { mutableStateOf<String?>(null) } // Holds the opponent being challenged
-    var incomingChallenge by remember { mutableStateOf<Triple<String, String, String>?>(null) } // Holds (id, fromPlayer, toPlayer)
+    var opponent by remember { mutableStateOf<String?>(null) }
+    var incomingChallenge by remember { mutableStateOf<Triple<String, String, String>?>(null) }
 
-    // Observer to handle online/offline status
+    // New state variable to store the challenge ID created by this player
+    var outgoingChallengeId by remember { mutableStateOf<String?>(null) }
+    var outgoingChallengeOpponent by remember { mutableStateOf<String?>(null) }
+
+    // Lifecycle observer for setting player online/offline
     LaunchedEffect(lifecycleOwner) {
         val observer = object : LifecycleEventObserver {
             override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
@@ -343,7 +347,7 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         lifecycleOwner.lifecycle.addObserver(observer)
     }
 
-    // Fetch live updates for player statuses
+    // Fetch players
     LaunchedEffect(Unit) {
         firestore.collection("players")
             .addSnapshotListener { snapshot, error ->
@@ -366,16 +370,40 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
             }
     }
 
-    // Send a challenge when `opponent` is set
+    // When opponent is chosen to challenge, send the challenge
     LaunchedEffect(opponent) {
         opponent?.let { currentOpponent ->
             sendChallenge(
                 fromPlayer = loggedInUsername,
                 toPlayer = currentOpponent,
                 firestore = firestore,
-                onSuccess = {
-                    Log.d("Challenge", "Challenge sent to $currentOpponent")
-                    opponent = null // Reset opponent after sending
+                onSuccess = { challengeId ->
+                    Log.d("Challenge", "Challenge sent to $currentOpponent with ID: $challengeId")
+                    outgoingChallengeId = challengeId
+                    outgoingChallengeOpponent = currentOpponent
+                    opponent = null
+
+                    // Listen to changes for this challenge (for the challenger)
+                    challengeId?.let { id ->
+                        firestore.collection("challenges").document(id)
+                            .addSnapshotListener { docSnapshot, error ->
+                                if (error != null) {
+                                    Log.e("ChallengeError", "Error listening to challenge: ${error.message}")
+                                    return@addSnapshotListener
+                                }
+
+                                val challengeData = docSnapshot?.data
+                                val status = challengeData?.get("status") as? String
+                                val fromPlayer = challengeData?.get("fromPlayer") as? String
+                                val toPlayer = challengeData?.get("toPlayer") as? String
+
+                                // If this challenge was accepted and this user was the one who sent it, navigate them too
+                                if (status == "accepted" && fromPlayer == loggedInUsername && toPlayer == outgoingChallengeOpponent) {
+                                    navController.navigate("GameBoardScreen?playerName=$fromPlayer&opponentName=$toPlayer")
+                                }
+                            }
+                    }
+
                 },
                 onFailure = { exception ->
                     Log.e("ChallengeError", "Failed to send challenge: ${exception.message}")
@@ -384,7 +412,7 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         }
     }
 
-    // Listen for challenges targeted at the current user
+    // Listen for incoming challenges
     LaunchedEffect(Unit) {
         listenForChallenges(
             loggedInUsername = loggedInUsername,
@@ -395,11 +423,11 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
         )
     }
 
-    // Handle Game Invitation Dialog
+    // Handle incoming challenge dialog
     incomingChallenge?.let { (challengeId, challenger, _) ->
         GameInvitation(
             onDismissRequest = {
-                declineChallenge(challengeId, firestore) // Decline challenge
+                declineChallenge(challengeId, firestore) // Decline
                 incomingChallenge = null
             },
             onConfirmation = {
@@ -449,7 +477,6 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
                 modifier = Modifier.padding(vertical = 8.dp)
             )
 
-            // A card-like background for player list for better readability
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -467,7 +494,7 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
             }
         }
 
-        // GameInvitation (Dialog)
+        // Still handle incomingChallenge dialog if needed
         incomingChallenge?.let { (challengeId, challenger, _) ->
             GameInvitation(
                 onDismissRequest = {
@@ -492,12 +519,12 @@ fun LobbyScreen(navController: NavController, loggedInUsername: String) {
     }
 }
 
-//Send challenge
+// Adjust sendChallenge to return the challenge ID
 fun sendChallenge(
     fromPlayer: String,
     toPlayer: String,
     firestore: FirebaseFirestore,
-    onSuccess: () -> Unit,
+    onSuccess: (challengeId: String?) -> Unit,
     onFailure: (Exception) -> Unit
 ) {
     val challenge = mapOf(
@@ -508,7 +535,9 @@ fun sendChallenge(
 
     firestore.collection("challenges")
         .add(challenge)
-        .addOnSuccessListener { onSuccess() }
+        .addOnSuccessListener { docRef ->
+            onSuccess(docRef.id)
+        }
         .addOnFailureListener { exception -> onFailure(exception) }
 }
 
@@ -527,7 +556,7 @@ fun listenForChallenges(
                 return@addSnapshotListener
             }
 
-            // Map Firestore documents to challenge data
+            // Map documents to challenge data
             snapshot?.documents?.mapNotNull { doc ->
                 val id = doc.id
                 val fromPlayer = doc.getString("fromPlayer")
@@ -575,7 +604,6 @@ fun declineChallenge(challengeId: String, firestore: FirebaseFirestore) {
         }
 }
 
-//sammys parts
 @Composable
 fun GameBoardScreen(
     navController: NavController,
@@ -588,18 +616,19 @@ fun GameBoardScreen(
     val opponentGrid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } }
     var gameWon by remember { mutableStateOf(false) }
     var isShipPlacementPhase by remember { mutableStateOf(true) }
-    var currentShipIndex by remember { mutableStateOf(0) }
+    var currentShipIndex by remember { mutableIntStateOf(0) }
     var isPlayerReady by remember { mutableStateOf(false) }
     var startPoint by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var endPoint by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var isPlayerOneTurn by mutableStateOf(true) // Track the current player's turn
 
     val ships = listOf(
-        "Carrier" to 5,
-        "Battleship" to 4,
-        "Cruiser" to 3,
-        "Submarine" to 3,
-        "Destroyer" to 2
+        "Carrier" to 4,
+        "Battleship" to 3,
+        "Cruiser1" to 2,
+        "Cruiser2" to 2,
+        "Submarine" to 1,
+        "Destroyer" to 1
     )
 
     fun checkGameState(grid: List<List<String>>): Boolean {
