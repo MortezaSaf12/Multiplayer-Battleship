@@ -575,138 +575,254 @@ fun declineChallenge(challengeId: String, firestore: FirebaseFirestore) {
         }
 }
 
+//sammys parts
 @Composable
 fun GameBoardScreen(
     navController: NavController,
     playerName: String,
     opponentName: String
 ) {
+    // Initial variables
     val boardSize = 10
-    val player1Grid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 1's grid
-    val player2Grid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 2's grid
-    val player1View = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 1's view of Player 2's grid
-    val player2View = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } } // Player 2's view of Player 1's grid
-    var turn by remember { mutableStateOf("Player 1") }
+    val playerGrid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } }
+    val opponentGrid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } }
+    var gameWon by remember { mutableStateOf(false) }
+    var isShipPlacementPhase by remember { mutableStateOf(true) }
+    var currentShipIndex by remember { mutableStateOf(0) }
+    var isPlayerReady by remember { mutableStateOf(false) }
+    var startPoint by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var endPoint by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var isPlayerOneTurn by mutableStateOf(true) // Track the current player's turn
 
-    fun translateCoordinates(row: Int, col: Int): Pair<Int, Int> {
-        // Simple translation logic (identity mapping for demonstration)
-        return row to col
+    val ships = listOf(
+        "Carrier" to 5,
+        "Battleship" to 4,
+        "Cruiser" to 3,
+        "Submarine" to 3,
+        "Destroyer" to 2
+    )
+
+    fun checkGameState(grid: List<List<String>>): Boolean {
+        return grid.flatten().none { it == "S" } // No ships left
     }
 
-    fun handleCellClick(
-        playerGrid: MutableList<MutableList<String>>,
-        opponentView: MutableList<MutableList<String>>,
-        row: Int,
-        col: Int
-    ) {
-        if (turn == "Player 1") {
-            val (translatedRow, translatedCol) = translateCoordinates(row, col)
-            if (opponentView[translatedRow][translatedCol] == "W") {
-                opponentView[translatedRow][translatedCol] = if (playerGrid[translatedRow][translatedCol] == "S") "H" else "M"
-                turn = "Player 2"
+    fun placeShip(startPoint: Pair<Int, Int>, endPoint: Pair<Int, Int>, shipSize: Int): Boolean {
+        val (startRow, startCol) = startPoint
+        val (endRow, endCol) = endPoint
+
+        // Logic to check if placement is valid (horizontal or vertical)
+        val isHorizontal = startRow == endRow
+        val isVertical = startCol == endCol
+
+        if (!isHorizontal && !isVertical) return false
+
+        val cells = if (isHorizontal) {
+            (minOf(startCol, endCol)..maxOf(startCol, endCol)).map { startRow to it }
+        } else {
+            (minOf(startRow, endRow)..maxOf(startRow, endRow)).map { it to startCol }
+        }
+
+        if (cells.size != shipSize || cells.any { (r, c) -> playerGrid[r][c] != "W" }) {
+            return false
+        }
+
+        // Place the ship on the grid
+        cells.forEach { (r, c) ->
+            playerGrid[r][c] = "S"
+        }
+        return true
+    }
+    fun handleCellClick(row: Int, col: Int) {
+        if (isShipPlacementPhase) {
+            if (startPoint == null) {
+                startPoint = row to col
+            } else {
+                endPoint = row to col
+                val (currentShip, currentSize) = ships[currentShipIndex]
+
+                // Try placing the ship
+                if (startPoint != null && endPoint != null) {
+                    if (placeShip(startPoint!!, endPoint!!, currentSize)) {
+                        if (currentShipIndex < ships.size - 1) {
+                            currentShipIndex++
+                            startPoint = null
+                            endPoint = null
+                        } else {
+                            isShipPlacementPhase = false // End ship placement phase
+                        }
+                    } else {
+                        startPoint = null
+                        endPoint = null // Reset start and end if placement fails
+                    }
+                }
             }
         } else {
-            val (translatedRow, translatedCol) = translateCoordinates(row, col)
-            if (opponentView[translatedRow][translatedCol] == "W") {
-                opponentView[translatedRow][translatedCol] = if (playerGrid[translatedRow][translatedCol] == "S") "H" else "M"
-                turn = "Player 1"
+            if (isPlayerOneTurn) {
+                // Handle attacks on the opponent's grid
+                when (opponentGrid[row][col]) {
+                    "W" -> {
+                        opponentGrid[row][col] = "M" // Mark as miss
+                    }
+                    "S" -> {
+                        opponentGrid[row][col] = "H" // Mark as hit
+
+                        // Check if all ships are destroyed
+                        if (checkGameState(opponentGrid)) {
+                            gameWon = true
+                        }
+                    }
+                }
+                isPlayerOneTurn = false // Switch to opponent's turn
+            } else {
+                // Handle opponent's turn (future logic can be added here)
+                isPlayerOneTurn = true // Switch back to player one's turn
             }
         }
     }
+    @Composable
+    fun RenderOpponentGrid(opponentGrid: List<List<String>>, onCellClick: (Int, Int) -> Unit) {
+        GameGridView(
+            grid = opponentGrid.map { row ->
+                row.map { cell -> if (cell == "S") "W" else cell }
+            },
+            onCellClick = onCellClick
+        )
+    }
 
+    // UI components and layout
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .padding(top = 50.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "$playerName vs $opponentName",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        if (isShipPlacementPhase) {
+            val (currentShip, currentSize) = ships[currentShipIndex]
 
-        Text(
-            text = "Current Turn: ${if (turn == "Player 1") playerName else opponentName}",
-            fontSize = 16.sp,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-
-        // Opponent's Grid
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "$opponentName's Board",
+                text = "Place Your Ships",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = "Current Ship: $currentShip ($currentSize spaces)",
+                fontSize = 16.sp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            Text(
+                text = if (startPoint == null) "Select the starting point" else "Select the ending point",
+                fontSize = 16.sp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Player's Grid for ship placement
+            GameGridView(
+                grid = playerGrid,
+                onCellClick = { row, col -> handleCellClick(row, col) }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // Ready Button
+        if (!isShipPlacementPhase && !isPlayerReady) {
+            Button(
+                onClick = { isPlayerReady = true },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.DarkGray,
+                    contentColor = Color.White
+                ),
+                modifier = Modifier
+                    .padding(vertical = 16.dp)
+                    .fillMaxWidth()
+            ) {
+                Text("Ready")
+            }
+        }
+
+        // Gameplay Phase
+        if (isPlayerReady) {
+            Text(
+                text = "Game On! Take your turns.",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Player's Grid (with ships) - at the top
+            Text(
+                text = "Your Ships",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-            GridView(
-                grid = if (turn == "Player 1") player1View else player2View,
-                onCellClick = { row, col ->
-                    if (turn == "Player 1") {
-                        handleCellClick(player2Grid, player1View, row, col)
-                    } else {
-                        handleCellClick(player1Grid, player2View, row, col)
-                    }
-                }
+            GameGridView(
+                grid = playerGrid,
+                modifier = Modifier.size(300.dp) // Size of the top grid
             )
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
-        // Player's Own Grid
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Opponent's Grid (empty for attacks) - at the bottom
             Text(
-                text = "$playerName's Ships",
+                text = "Opponent's Board",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-            GridView(grid = if (turn == "Player 1") player1Grid else player2Grid)
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(
-            onClick = { navController.popBackStack() },
-            modifier = Modifier.padding(vertical = 16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Black,
-                contentColor = Color.White
+            RenderOpponentGrid(
+                opponentGrid = opponentGrid,
+                onCellClick = { row, col -> handleCellClick(row, col) }
             )
-        ) {
-            Text("Quit Game")
         }
     }
+
+    // Function definitions below initial variables
+
+    // Function to handle cell click during ship placement or attack
+
+
+    // Method to place a ship on the grid.
+
+
+    // Method to check if all opponent ships are destroyed.
+
+
+    // Render the opponent's grid with ships masked.
+
 }
 
+
 @Composable
-fun GridView(
+fun GameGridView(
     grid: List<List<String>>,
+    modifier: Modifier = Modifier,
     onCellClick: ((Int, Int) -> Unit)? = null
 ) {
     Column(
-        modifier = Modifier
-            .size(300.dp)
-            .aspectRatio(1f)
+        modifier = modifier.aspectRatio(1f)
     ) {
         for (i in grid.indices) {
             Row(
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(4.dp) // Adds spacing between cells
             ) {
                 for (j in grid[i].indices) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .aspectRatio(1f)
-                            .border(1.dp, Color.Black)
+                            .padding(2.dp)
                             .background(
                                 when (grid[i][j]) {
-                                    "H" -> Color.Red // Hit
-                                    "M" -> Color.Gray // Miss
                                     "S" -> Color.Black // Ship
-                                    else -> Color.Cyan // Water
+                                    "H" -> Color.Red   // Hit
+                                    "M" -> Color.Gray  // Miss
+                                    else -> Color.LightGray // Water
                                 }
                             )
                             .clickable(enabled = onCellClick != null) {
@@ -718,4 +834,3 @@ fun GridView(
         }
     }
 }
-
