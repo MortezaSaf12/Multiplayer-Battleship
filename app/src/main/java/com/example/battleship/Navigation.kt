@@ -604,6 +604,7 @@ fun declineChallenge(challengeId: String, firestore: FirebaseFirestore) {
         }
 }
 
+//sammys parts
 @Composable
 fun GameBoardScreen(
     navController: NavController,
@@ -616,11 +617,11 @@ fun GameBoardScreen(
     val opponentGrid = remember { MutableList(boardSize) { MutableList(boardSize) { "W" } } }
     var gameWon by remember { mutableStateOf(false) }
     var isShipPlacementPhase by remember { mutableStateOf(true) }
-    var currentShipIndex by remember { mutableIntStateOf(0) }
+    var currentShipIndex by remember { mutableStateOf(0) }
     var isPlayerReady by remember { mutableStateOf(false) }
     var startPoint by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var endPoint by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var isPlayerOneTurn by mutableStateOf(true) // Track the current player's turn
+    var isPlayerOneTurn by remember {mutableStateOf(true)} // Track the current player's turn
 
     val ships = listOf(
         "Carrier" to 4,
@@ -635,9 +636,43 @@ fun GameBoardScreen(
         return grid.flatten().none { it == "S" } // No ships left
     }
 
+    fun isWaterAroundCell(row: Int, col: Int): Boolean {
+        return if (row in 0 until boardSize && col in 0 until boardSize) {
+            playerGrid[row][col] == "W" // Check if the cell is water
+        } else {
+            true // If out of bounds, assume it's water (no ship can be placed outside the grid)
+        }
+    }
+
+    fun isWaterAroundShip(cells: List<Pair<Int, Int>>): Boolean {
+        for ((r, c) in cells) {
+            // Check adjacent cells (top, bottom, left, right)
+            if (!isWaterAroundCell(r - 1, c) || // Above
+                !isWaterAroundCell(r + 1, c) || // Below
+                !isWaterAroundCell(r, c - 1) || // Left
+                !isWaterAroundCell(r, c + 1)) { // Right
+                return false
+            }
+        }
+        return true
+    }
+
+
+
     fun placeShip(startPoint: Pair<Int, Int>, endPoint: Pair<Int, Int>, shipSize: Int): Boolean {
         val (startRow, startCol) = startPoint
         val (endRow, endCol) = endPoint
+
+        // If the ship size is 1, we don't need to check horizontal or vertical.
+        // Just check if the start and end points are the same for size 1 ships.
+        if (shipSize == 1) {
+            if (playerGrid[startRow][startCol] == "W" &&
+                isWaterAroundCell(startRow, startCol)) {
+                playerGrid[startRow][startCol] = "S" // Place the size 1 ship
+                return true
+            }
+            return false
+        }
 
         // Logic to check if placement is valid (horizontal or vertical)
         val isHorizontal = startRow == endRow
@@ -651,16 +686,21 @@ fun GameBoardScreen(
             (minOf(startRow, endRow)..maxOf(startRow, endRow)).map { it to startCol }
         }
 
+        // Ensure the ship size matches and no overlap
         if (cells.size != shipSize || cells.any { (r, c) -> playerGrid[r][c] != "W" }) {
             return false
         }
 
-        // Place the ship on the grid
-        cells.forEach { (r, c) ->
-            playerGrid[r][c] = "S"
+        // Check if there's water around the ship placement
+        if (!isWaterAroundShip(cells)) {
+            return false
         }
+
+        // Place the ship on the grid
+        cells.forEach { (r, c) -> playerGrid[r][c] = "S" }
         return true
     }
+
     fun handleCellClick(row: Int, col: Int) {
         if (isShipPlacementPhase) {
             if (startPoint == null) {
@@ -708,6 +748,7 @@ fun GameBoardScreen(
             }
         }
     }
+
     @Composable
     fun RenderOpponentGrid(opponentGrid: List<List<String>>, onCellClick: (Int, Int) -> Unit) {
         GameGridView(
